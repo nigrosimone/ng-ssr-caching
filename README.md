@@ -92,7 +92,7 @@ Express and on anything else. What the server underneath changes is how cheap th
 | a static asset on Fulmine                                        |          131 µs | **3.14x** |
 
 Nine alternating rounds, each server reporting its own `process.cpuUsage()`, and the per-round
-spread never crosses parity. Fulmine is a drop-in Express replacement, so trying it is the same one
+spread never crosses parity. [Fulmine](https://www.npmjs.com/package/fulmine.js) is a drop-in Express replacement, so trying it is the same one
 line this package is.
 
 ### Why the ETag matters more than it looks
