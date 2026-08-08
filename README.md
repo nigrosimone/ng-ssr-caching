@@ -90,7 +90,7 @@ app.use(ssrCaching()); // hits stop here
 app.use(angularHandler); // only misses get this far
 ```
 
-## ⚡ Telling the browser what to fetch, before the page exists
+## Telling the browser what to fetch, before the page exists
 
 A miss is expensive because the server has to render. While it does, the browser sits idle: it
 asked for a document and will not learn that the page needs `main-*.js` until the document arrives,
