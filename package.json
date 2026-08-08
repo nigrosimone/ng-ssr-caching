@@ -59,7 +59,7 @@
     "express": "^5.1.0",
     "fulmine.js": "^5.5.0",
     "prettier": "^3.9.6",
-    "typescript": "^5.9.3"
+    "typescript": "~6.0.3"
   },
   "peerDependencies": {
     "@angular/ssr": ">=17"

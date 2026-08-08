@@ -2,7 +2,13 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "CommonJS",
-    "moduleResolution": "node",
+    // node16 resolution would be the modern answer, but it forces module node16 too, and that
+    // decides the emit format from the root package.json, which says module: the CJS half would
+    // come out as ESM. node10 is deprecated rather than gone, and this package resolves nothing
+    // but node:crypto, so it costs nothing here. TypeScript 7 removes it, and by then the fix is
+    // a src/package.json marker or a build that emits both halves in one pass.
+    "moduleResolution": "node10",
+    "ignoreDeprecations": "6.0",
     "outDir": "dist/cjs",
     "declaration": false,
     "declarationMap": false
