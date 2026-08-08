@@ -1,0 +1,69 @@
+{
+  "name": "ng-ssr-caching",
+  "version": "22.0.0",
+  "description": "Cache for server-side rendered pages in Angular SSR (and any Express handler).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nigrosimone/ng-ssr-caching.git"
+  },
+  "keywords": [
+    "angular",
+    "ssr",
+    "cache",
+    "caching",
+    "express",
+    "middleware",
+    "server-side-rendering",
+    "etag",
+    "stale-while-revalidate",
+    "fulmine"
+  ],
+  "author": "Simone Nigro <nigro.simone@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/nigrosimone/ng-ssr-caching/issues"
+  },
+  "homepage": "https://github.com/nigrosimone/ng-ssr-caching",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build:esm && npm run build:cjs && node scripts/finish-build.mjs",
+    "build:esm": "tsc -p tsconfig.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "test": "node --test test/*.test.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "express": "^5.1.0",
+    "fulmine.js": "^5.5.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@angular/ssr": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "@angular/ssr": {
+      "optional": true
+    }
+  }
+}
