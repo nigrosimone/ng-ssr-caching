@@ -1,5 +1,7 @@
 node_modules/
-dist/
+# the package own build, not the examples: theirs are committed on purpose so StackBlitz
+# starts them without building anything
+/dist/
 *.tsbuildinfo
 
 # the angular dev server writes its vite cache here

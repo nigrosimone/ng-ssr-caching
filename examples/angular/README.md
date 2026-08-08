@@ -7,17 +7,11 @@ with SSR added, served by Express and kept by `ng-ssr-caching`.
 
 ```bash
 npm install
-npm run dev
+npm start
 ```
 
 Then load the page twice and watch the `x-ssr-cache` header go from `MISS` to `HIT`. `/api/cache`
 reports what the cache has been doing.
-
-## Why `ng serve` is enough
-
-Since Angular 17.2 the dev server runs your own `src/server.ts` through the handler
-`createNodeRequestHandler` exports, so the middleware you register there is the middleware that
-answers. No production build to wait through, which is what lets this open in one click.
 
 ## The part worth reading
 
@@ -34,3 +28,12 @@ may be, not from how stable the markup is.
 
 `earlyHints` does nothing here and that is expected: browsers only act on a `103` over HTTP/2, and
 the dev server speaks HTTP/1.1. `stats().hinted` stays at zero, which is the honest way to see it.
+
+## Why `dist/` is committed
+
+So that opening this starts a server rather than a build. What runs is the production output and the
+production server, which is the only version worth showing: a dev server would put its own
+per-request transform between you and the render, and the render is the thing being cached.
+
+The cost is that the build output can drift from the sources beside it. Run `npm run build` after
+changing anything under `src/`.

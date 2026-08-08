@@ -4,9 +4,9 @@
     "private": true,
     "description": "Angular 22 SSR on Express, with ng-ssr-caching in front of the render",
     "scripts": {
-        "dev": "ng serve --port 4000",
-        "start": "ng serve --port 4000",
-        "build": "ng build"
+        "start": "node dist/ng-ssr-caching-angular/server/server.mjs",
+        "build": "ng build",
+        "dev": "ng serve --port 4000"
     },
     "engines": {
         "node": ">=22"
@@ -33,7 +33,7 @@
         "@types/express": "^5.0.1"
     },
     "stackblitz": {
-        "startCommand": "npm run dev"
+        "startCommand": "npm start"
     },
     "allowScripts": {
         "esbuild@0.28.1": true

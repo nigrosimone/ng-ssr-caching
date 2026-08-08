@@ -7,7 +7,7 @@ rendered on the server by Express and kept by `ng-ssr-caching`.
 
 ```bash
 npm install
-npm run dev
+npm start
 ```
 
 Then load the page twice and watch the `x-ssr-cache` header go from `MISS` to `HIT`. `/api/cache`
@@ -41,3 +41,12 @@ app.use(cache);
 The `ttl` is short on purpose. This page carries live weather, and caching rendered HTML means
 caching the data inside it, so the number comes from how stale the weather may be rather than from
 how stable the markup is.
+
+## Why `dist/` is committed
+
+So that opening this starts a server rather than a build. What runs is the production output and the
+production server, which is the only version worth showing: a dev server would put its own
+per-request transform between you and the render, and the render is the thing being cached.
+
+The cost is that the build output can drift from the sources beside it. Run `npm run build` after
+changing anything under `src/`.

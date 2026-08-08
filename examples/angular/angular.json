@@ -59,7 +59,9 @@
             "outputMode": "server",
             "security": {
               "allowedHosts": [
-                "localhost"
+                "localhost",
+                ".stackblitz.io",
+                ".webcontainer.io"
               ]
             },
             "ssr": {
