@@ -21,8 +21,8 @@ your server produced from them.
 ✅ Bounded, least-recently-served eviction, and a body-size ceiling<br>
 ✅ Refuses to cache what must not be cached: `Authorization`, `Set-Cookie`, `no-store`, `private`, anything but 200<br>
 ✅ Optional `103 Early Hints` on a miss, so the browser fetches the bundle while the server renders<br>
-✅ Works with any Express-compatible server, tested against Express and [Fulmine](https://www.npmjs.com/package/fulmine.js) side by side<br>
-✅ Angular is what it is written for, but nothing in it is Angular: React SSR, Fastify and bare node work too<br>
+✅ Works with any Express-compatible server: every case is run against Express and [Fulmine](https://www.npmjs.com/package/fulmine.js) side by side, and the two have to agree<br>
+✅ Angular is what it is written for, but nothing in it is Angular: [React](#react-including-a-streamed-render) including streamed renders, [Fastify](#fastify), [bare node](#a-bare-nodehttp-server), all tested<br>
 ✅ No dependencies<br>
 
 ## Get Started
@@ -74,6 +74,22 @@ console, because a cache that silently never fills is an afternoon of wondering 
 That is the whole integration. Every response carries an `x-ssr-cache` header saying `HIT`, `MISS`,
 `STALE` or `BYPASS`, so you can see what it is doing before you trust it.
 
+### What a hit skips
+
+A hit is answered here and goes no further, which is the point, but it is worth knowing exactly what
+"no further" means. The render does not run. Nothing registered **after** the cache runs either. And
+of the headers the render set, only the ones that belong to the page come back with it:
+`content-type`, `content-language`, `vary`, `link` and `cache-control`.
+
+So anything that has to happen on every request - a log line, a security header, a request id -
+belongs in front of the cache, where hits and misses both pass through it:
+
+```ts
+app.use(helmet()); // runs on every request
+app.use(ssrCaching()); // hits stop here
+app.use(angularHandler); // only misses get this far
+```
+
 ## ⚡ Telling the browser what to fetch, before the page exists
 
 A miss is expensive because the server has to render. While it does, the browser sits idle: it
@@ -122,7 +138,7 @@ Nothing is invented: the announced resources are the ones the document itself de
 `103`, and a module script is announced with `crossorigin` because a module is fetched in CORS mode
 and without it the browser downloads the bundle twice.
 
-## 🔒 Who is allowed to see a cached page
+## Who is allowed to see a cached page
 
 This cache holds one page per URL and hands it to whoever asks for it next. That makes it a
 **shared** cache, and a shared cache has one rule it cannot be wrong about: a page rendered for a
@@ -188,18 +204,25 @@ what lets a returning visitor be answered with an empty `304`.
 
 ## What it refuses to cache
 
-Silently, and on purpose:
+On purpose, and - but for the one below that says so out loud - silently:
 
 - anything that is not a `200`
 - any request carrying an `Authorization` header, which is also never served one
 - any request carrying one of your `bypassCookies`, likewise
 - any response carrying a `Set-Cookie`
-- any response whose `Cache-Control` says `no-store` or `private`
+- any response whose `Cache-Control` says `no-store` or `private`. `no-cache` is not on this list:
+  it means "revalidate before reusing", not "do not keep it", so the page is stored and the
+  directive is replayed
+- any response whose `Vary` names `Cookie`, `Authorization` or `*`, because the handler is saying
+  the page depends on something this cache does not key on. `Vary: Accept-Encoding` is fine
+- any response that arrived already compressed, which is the wiring mistake above and the one
+  refusal that is not silent
 - any request whose `key` returns `null`, which is the escape hatch for everything else
 - any body larger than `maxBodyBytes`, which is served normally and simply not remembered
 - any method outside `methods`, `GET` and `HEAD` by default
+- anything `shouldCache` says no to, which runs last and has the final word
 
-## ⚠️ The cached HTML contains your data
+## The cached HTML contains your data
 
 This is the part to read twice. Angular embeds the **TransferState** in the page it renders: the
 responses your application fetched during the render are serialized into a `<script id="ng-state">`
@@ -232,25 +255,107 @@ needs to and a dashboard can see what is happening.
 
 This package exists for Angular SSR and the documentation above is written for it. The code is not:
 it caches an HTML response, and it has no dependencies and no idea what produced the page. So it
-works elsewhere, and the cases below are tested rather than assumed.
+works elsewhere, and every case below is a test in this repository rather than a sentence in this
+file.
 
 Two runnable examples open on StackBlitz in one click, the same weather app rendered on the server
 and cached: **[Angular](https://stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/angular)**
 and **[React](https://stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/react)**.
 Load the page twice and watch the header go from MISS to HIT.
 
-**React SSR**, including `renderToPipeableStream`. A streamed render arrives as many `write()` calls
-and is stored as the whole page, so the second visitor gets it in one piece, with the ETag and the
-`304` that come with it. Measured on a 40-boundary render: one render for two requests, identical
-bytes, `MISS` then `HIT`.
+### React, including a streamed render
 
-Everything in [who is allowed to see a cached page](#-who-is-allowed-to-see-a-cached-page) applies
-unchanged, and the warning about the cached HTML containing your data applies harder: React
-serializes its own data into the document exactly as Angular serializes the TransferState.
+The wiring is the wiring: the cache goes in front of whatever renders, and on Express that is one
+`app.use`. This is the production shape, serving what a build produced rather than a dev server:
 
-**Any server with the Express middleware shape.** Fastify through
-[`@fastify/middie`](https://github.com/fastify/middie), and a bare `node:http` server by calling it
-yourself:
+```js
+import express from 'express';
+import { createElement } from 'react';
+import { renderToPipeableStream } from 'react-dom/server';
+import { ssrCaching } from 'ng-ssr-caching';
+import { App } from './dist/server/entry-server.js';
+
+const app = express();
+
+const cache = ssrCaching({
+  // short on purpose: see below. The number comes from the data in the page, not from the markup
+  ttl: 30_000,
+  earlyHints: true,
+});
+
+// in front of the cache, or the numbers would be a cached page of their own
+app.get('/api/cache', (req, res) => res.json(cache.stats()));
+
+app.use(cache);
+app.use(express.static('dist/client', { index: false }));
+
+app.use((req, res) => {
+  const { pipe } = renderToPipeableStream(createElement(App, { url: req.url }), {
+    bootstrapModules: ['/main.js'],
+    onShellReady() {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      pipe(res);
+    },
+  });
+});
+
+app.listen(5173);
+```
+
+`renderToString` needs no comment: it ends the response once, which is the easy case.
+`renderToPipeableStream` is the interesting one. It reaches the response as a run of `write()`
+calls - the shell, then each Suspense boundary as it resolves - and the response goes out with no
+`Content-Length` at all, because the server does not know the length until it is finished.
+
+What is stored is the finished document. So the second visitor gets in one piece what the first one
+got in pieces, with a length and an ETag the streamed response never had, and therefore with the
+`304` those make possible. Measured on a forty-boundary render: one render for two requests, the two
+pages identical byte for byte.
+
+**And the same warning as for Angular, harder.** React has no name for the TransferState, but every
+SSR application writes its data into the document by hand, usually as a `window.__STATE__` beside
+the markup that was rendered from it:
+
+```js
+res.end(template.replace('<!--ssr-->', html).replace('__SSR_STATE__', JSON.stringify(state)));
+```
+
+That data is inside the page, so the cache keeps it. A `ttl` of 30 seconds on a weather page is a
+promise that the temperature may be half a minute old; the same 30 seconds on a price is a different
+promise entirely. When something changes that the `ttl` cannot know about, `cache.purge(key?)` is
+the answer. Everything in [who is allowed to see a cached page](#who-is-allowed-to-see-a-cached-page)
+applies unchanged.
+
+### Fastify
+
+Through [`@fastify/middie`](https://github.com/fastify/middie), which hands a middleware node's own
+request and response, which is all this one asks for:
+
+```js
+import Fastify from 'fastify';
+import middie from '@fastify/middie';
+import { ssrCaching } from 'ng-ssr-caching';
+
+const app = Fastify();
+await app.register(middie);
+
+app.use(ssrCaching({ ttl: 60_000 }));
+
+app.get('/*', async (req, reply) => {
+  reply.type('text/html; charset=utf-8').send(await render(req.url));
+});
+
+await app.listen({ port: 3000 });
+```
+
+A hit is answered from the middleware, so the route below never runs and Fastify is never asked to
+serialize anything.
+
+### A bare node:http server
+
+No framework at all: the middleware is a function of three arguments, so call it and pass it your
+render as `next`.
 
 ```js
 import { createServer } from 'node:http';
@@ -260,15 +365,23 @@ const cache = ssrCaching({ ttl: 60_000 });
 
 createServer((req, res) => {
   cache(req, res, () => {
-    // your render
+    res.statusCode = 200;
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.end(renderMyPage(req.url));
   });
 }).listen(3000);
 ```
 
-**And two pieces on their own**, for a server this middleware does not fit:
+`cache.stats()`, `cache.purge(key?)` and `cache.keys()` are on that same function, so a dashboard
+and a deploy hook need nothing else.
 
-- `weakEtag(body)` gives the validator Express would have produced. It is the whole trick of this
-  package: computed once at store time rather than on every hit.
+### Anything else: the two pieces on their own
+
+For a server this middleware does not fit, the two parts worth having are exported by themselves:
+
+- `weakEtag(body)` gives the validator Express would have produced, for the same bytes. It is the
+  whole trick of this package: computed once at store time rather than on every hit. There is a test
+  that asserts it character for character against what Express itself sends.
 - `earlyHintLinksFrom(html)` reads a rendered page and returns the `Link` values a `103` can carry.
 
 ## License

@@ -9,62 +9,7 @@ import fulmine from 'fulmine.js';
 import compression from 'compression';
 import { request as httpRequest } from 'node:http';
 import { ssrCaching } from '../dist/esm/index.js';
-
-const SERVERS = [
-  ['express', express],
-  ['fulmine', fulmine],
-];
-
-/**
- * Starts an app on a free port and answers a fetch bound to it, plus the cache's own handle.
- *
- * @param {(app: any, cache: any) => void} setup
- * @param {object} [options] passed to ssrCaching
- */
-function serve(factory, setup, options, wireBefore) {
-  return new Promise((resolve) => {
-    const app = factory();
-    app.set('etag', false);
-    const cache = ssrCaching(options);
-    if (wireBefore) wireBefore(app);
-    app.use(cache);
-    setup(app, cache);
-    const server = app.listen(0, () => {
-      const port = (server.address ? server : app).address().port;
-      resolve({
-        cache,
-        get: (path, init) => fetch(`http://localhost:${port}${path}`, init),
-        close: () => (app.close ? app.close() : server.close()),
-      });
-    });
-  });
-}
-
-/**
- * Runs the same body against both servers and asserts they agreed. Pass `expect` when agreeing is
- * not enough on its own, because two servers can be wrong in the same way, and on anything about
- * who gets to see a page they must not be.
- */
-function both(name, options, body) {
-  test(name, async () => {
-    const seen = [];
-    for (const [label, factory] of SERVERS) {
-      const ctx = await serve(factory, body.setup, options, body.wireBefore);
-      try {
-        seen.push([label, await body.run(ctx)]);
-      } finally {
-        ctx.close();
-      }
-    }
-    const [[, a], [, b]] = seen;
-    assert.deepStrictEqual(
-      b,
-      a,
-      `express and fulmine disagreed:\n${JSON.stringify(seen, null, 1)}`,
-    );
-    if (body.expect) assert.deepStrictEqual(a, body.expect);
-  });
-}
+import { both } from './helpers.mjs';
 
 let rendered = 0;
 const page = (extra) => (req, res) => {
@@ -109,16 +54,24 @@ both(
       app.get('/page', page());
     },
     async run({ get }) {
-      const first = await get('/page');
-      const etag = first.headers.get('etag');
+      // the validator has to come from a hit: a miss is the handler's own response, and these
+      // servers have their etag turned off, so there is nothing on it to send back
+      await (await get('/page')).text();
+      const hit = await get('/page');
+      await hit.text();
+      const etag = hit.headers.get('etag');
       const conditional = await get('/page', { headers: { 'if-none-match': etag } });
       return {
+        etagWasReal: /^W\/"[0-9a-f]+-/.test(etag ?? ''),
         status: conditional.status,
         body: await conditional.text(),
         mark: conditional.headers.get('x-ssr-cache'),
         etagEchoed: conditional.headers.get('etag') === etag,
       };
     },
+    // spelled out rather than left to the two servers agreeing, because they agree just as
+    // happily on a 200 with the whole page in it, which is the thing this is meant to catch
+    expect: { etagWasReal: true, status: 304, body: '', mark: 'HIT', etagEchoed: true },
   },
 );
 
