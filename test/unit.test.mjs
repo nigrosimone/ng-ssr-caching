@@ -322,10 +322,13 @@ test('a request that says almost nothing is still given a key', () => {
 
   const noMethod = ssrCaching({ ttl: 60_000 });
   const res = through(noMethod, { headers: {}, url: '/page' }, renderHtml);
-  // eligibility reads a missing method as a GET, so the request is cached rather than waved
-  // through. The key prints it as it found it, which is the one place the two disagree — no real
-  // server produces a request without a method, so this is about not crashing, not about the name.
+  // a missing method is a GET to the eligibility check, so it has to be a GET to the key as well:
+  // read one way there and another way here, the entry would be filed under a name no later
+  // request could produce, and the page would be stored once per visit and served to nobody
   assert.strictEqual(res.getHeader('x-ssr-cache'), 'MISS');
-  assert.strictEqual(noMethod.keys().length, 1);
-  assert.match(noMethod.keys()[0], / \/page$/);
+  assert.deepStrictEqual(noMethod.keys(), ['GET /page']);
+
+  // and the two now agree well enough to hit
+  const hit = through(noMethod, { headers: {}, url: '/page' });
+  assert.strictEqual(hit.getHeader('x-ssr-cache'), 'HIT');
 });

@@ -49,6 +49,7 @@
     "build:esm": "tsc -p tsconfig.json",
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "test": "node --test test/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "release:bump": "node .github/scripts/release.mjs bump",

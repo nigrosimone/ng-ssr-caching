@@ -298,9 +298,11 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
 
   /** Learned from the first page stored, then reused: an application serves the same bundles. */
   let hintLinks: string[] | null = null;
+  // the same reading of a missing method as the eligibility check above, so a request cannot be
+  // treated as a GET there and keyed as something else here
   const keyOf =
     options.key ??
-    ((req: CacheableRequest) => `${req.method} ${req.originalUrl ?? req.url ?? '/'}`);
+    ((req: CacheableRequest) => `${req.method ?? 'GET'} ${req.originalUrl ?? req.url ?? '/'}`);
   const shouldCache = options.shouldCache;
 
   // insertion ordered, which is what makes the eviction below least-recently-served
