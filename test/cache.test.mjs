@@ -39,7 +39,11 @@ function serve(factory, setup, options, wireBefore) {
   });
 }
 
-/** Runs the same body against both servers and asserts they agreed. */
+/**
+ * Runs the same body against both servers and asserts they agreed. Pass `expect` when agreeing is
+ * not enough on its own, because two servers can be wrong in the same way, and on anything about
+ * who gets to see a page they must not be.
+ */
 function both(name, options, body) {
   test(name, async () => {
     const seen = [];
@@ -57,6 +61,7 @@ function both(name, options, body) {
       a,
       `express and fulmine disagreed:\n${JSON.stringify(seen, null, 1)}`,
     );
+    if (body.expect) assert.deepStrictEqual(a, body.expect);
   });
 }
 
@@ -178,6 +183,162 @@ both(
         authedMark: authed.headers.get('x-ssr-cache'),
         entries: cache.stats().entries,
       };
+    },
+  },
+);
+
+// The page below says who it was rendered for, so a leak is visible in the body rather than
+// inferred from a counter.
+const whoami = (req, res) => {
+  rendered++;
+  res.setHeader('content-type', 'text/html;charset=UTF-8');
+  res.end(
+    `<html><body>${req.headers.authorization ?? req.headers.cookie ?? 'anonymous'}</body></html>`,
+  );
+};
+
+both(
+  'a request carrying Authorization is neither served from the cache nor stored into it',
+  { ttl: 60_000 },
+  {
+    setup(app) {
+      app.get('/dashboard', whoami);
+    },
+    async run({ get, cache }) {
+      rendered = 0;
+      // alice signs in first, so hers is the render that would fill an empty cache
+      const alice = await get('/dashboard', { headers: { authorization: 'Bearer alice' } });
+      const aliceBody = await alice.text();
+      const storedForAlice = cache.stats().entries;
+      // bob asks anonymously: he must get his own page, not hers
+      const bob = await get('/dashboard');
+      const bobBody = await bob.text();
+      // and now that a page IS cached, alice must still not be handed it
+      const again = await get('/dashboard', { headers: { authorization: 'Bearer alice' } });
+      return {
+        rendered,
+        aliceMark: alice.headers.get('x-ssr-cache'),
+        aliceBody,
+        storedForAlice,
+        bobMark: bob.headers.get('x-ssr-cache'),
+        bobBody,
+        againMark: again.headers.get('x-ssr-cache'),
+        againBody: await again.text(),
+      };
+    },
+    expect: {
+      rendered: 3,
+      aliceMark: 'BYPASS',
+      aliceBody: '<html><body>Bearer alice</body></html>',
+      storedForAlice: 0,
+      bobMark: 'MISS',
+      bobBody: '<html><body>anonymous</body></html>',
+      againMark: 'BYPASS',
+      againBody: '<html><body>Bearer alice</body></html>',
+    },
+  },
+);
+
+both(
+  'cacheAuthenticated opts back in, for an application whose token changes nothing',
+  { ttl: 60_000, cacheAuthenticated: true },
+  {
+    setup(app) {
+      app.get('/dashboard', whoami);
+    },
+    async run({ get, cache }) {
+      rendered = 0;
+      const first = await get('/dashboard', { headers: { authorization: 'Bearer alice' } });
+      await first.text();
+      const second = await get('/dashboard', { headers: { authorization: 'Bearer bob' } });
+      return {
+        rendered,
+        secondMark: second.headers.get('x-ssr-cache'),
+        secondBody: await second.text(),
+        entries: cache.stats().entries,
+      };
+    },
+    // bob reading alice's page is exactly what this option buys, and why it is not the default
+    expect: {
+      rendered: 1,
+      secondMark: 'HIT',
+      secondBody: '<html><body>Bearer alice</body></html>',
+      entries: 1,
+    },
+  },
+);
+
+both(
+  'bypassCookies names the session cookie, and only that one',
+  { ttl: 60_000, bypassCookies: ['session', /^connect\.sid$/] },
+  {
+    setup(app) {
+      app.get('/page', whoami);
+    },
+    async run({ get, cache }) {
+      rendered = 0;
+      const analytics = await get('/page', { headers: { cookie: 'ga=1; theme=dark' } });
+      await analytics.text();
+      const session = await get('/page', { headers: { cookie: 'ga=1; session=alice' } });
+      const connect = await get('/page', { headers: { cookie: 'connect.sid=s%3Aabc' } });
+      // a name that merely contains one of ours is somebody else's cookie
+      const lookalike = await get('/page', { headers: { cookie: 'sessionless=1' } });
+      return {
+        rendered,
+        analyticsMark: analytics.headers.get('x-ssr-cache'),
+        sessionMark: session.headers.get('x-ssr-cache'),
+        sessionBody: await session.text(),
+        connectMark: connect.headers.get('x-ssr-cache'),
+        lookalikeMark: lookalike.headers.get('x-ssr-cache'),
+        entries: cache.stats().entries,
+      };
+    },
+    expect: {
+      rendered: 3,
+      analyticsMark: 'MISS',
+      sessionMark: 'BYPASS',
+      sessionBody: '<html><body>ga=1; session=alice</body></html>',
+      connectMark: 'BYPASS',
+      lookalikeMark: 'HIT',
+      entries: 1,
+    },
+  },
+);
+
+both(
+  'a Vary the cache does not key on is a refusal, and Accept-Encoding is not one',
+  { ttl: 60_000 },
+  {
+    setup(app) {
+      app.get(
+        '/personal',
+        page((req, res) => res.setHeader('vary', 'Accept-Encoding, Cookie')),
+      );
+      app.get(
+        '/negotiated',
+        page((req, res) => res.setHeader('vary', 'Accept-Encoding')),
+      );
+    },
+    async run({ get, cache }) {
+      rendered = 0;
+      await (await get('/personal')).text();
+      const personalAgain = await get('/personal');
+      await personalAgain.text();
+      await (await get('/negotiated')).text();
+      const negotiatedAgain = await get('/negotiated');
+      await negotiatedAgain.text();
+      return {
+        rendered,
+        personalMark: personalAgain.headers.get('x-ssr-cache'),
+        negotiatedMark: negotiatedAgain.headers.get('x-ssr-cache'),
+        keys: cache.keys(),
+      };
+    },
+    expect: {
+      rendered: 3,
+      personalMark: 'MISS',
+      negotiatedMark: 'HIT',
+      keys: ['GET /negotiated'],
     },
   },
 );

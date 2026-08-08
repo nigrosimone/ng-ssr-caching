@@ -48,6 +48,32 @@ export interface SsrCachingOptions {
   key?: (req: CacheableRequest) => string | null;
   /** The last word on whether a rendered response may be stored. Runs after the built-in refusals. */
   shouldCache?: (req: CacheableRequest, res: CacheableResponse) => boolean;
+  /**
+   * Cookie names whose presence makes a request personal, so it is neither served from the cache
+   * nor stored into it. Strings match a cookie of exactly that name; a RegExp is tested against
+   * each name.
+   *
+   * There is no safe default here, because a cookie means nothing on its own: an analytics one says
+   * nothing about who you are, a session one says everything. So this cache does not guess, and a
+   * cookie-authenticated application has to name its session cookie:
+   *
+   *     ssrCaching({ bypassCookies: ['session', /^connect\\.sid$/] })
+   *
+   * Get this wrong and one visitor's page is handed to the next. `Authorization` needs no setting
+   * because it is never ambiguous, see below.
+   */
+  bypassCookies?: readonly (string | RegExp)[];
+  /**
+   * Whether a request carrying an `Authorization` header may use this cache. Default false, and
+   * changing it is a decision about your own data.
+   *
+   * False means such a request is passed straight through: nothing is served to it from the cache
+   * and nothing it produces is stored. That is what RFC 9111 §3.5 requires of a shared cache, and
+   * this is a shared cache: it holds one page per URL and hands it to whoever asks next. Without
+   * this rule a signed-in visitor's page, rendered 200 and with no `Set-Cookie` because a bearer
+   * token sets none, would be stored under the plain URL and served to everyone after them.
+   */
+  cacheAuthenticated?: boolean;
   /** Which methods are eligible. Default GET and HEAD. */
   methods?: readonly string[];
   /** The header that reports HIT, MISS, STALE or BYPASS. Set false to send nothing. Default "x-ssr-cache". */
@@ -100,6 +126,35 @@ const NOT_REPLAYED = new Set([
 
 const REPLAYED_CANDIDATES = ['content-type', 'content-language', 'vary', 'link', 'cache-control'];
 
+/**
+ * Whether this request carries something that identifies a person, which makes the page it produces
+ * that person's rather than everyone's.
+ *
+ * `Authorization` is the unambiguous one, and RFC 9111 §3.5 requires a shared cache to leave those
+ * requests alone. Cookies are not: an analytics cookie says nothing, a session cookie says
+ * everything, and only the application knows which of its own is which, so it names them.
+ */
+function carriesCredentials(
+  req: CacheableRequest,
+  cacheAuthenticated: boolean,
+  bypassCookies: readonly (string | RegExp)[],
+): boolean {
+  if (!cacheAuthenticated && req.headers['authorization'] !== undefined) {
+    return true;
+  }
+  if (bypassCookies.length === 0) return false;
+  const cookie = req.headers['cookie'];
+  if (typeof cookie !== 'string' || cookie.length === 0) return false;
+  for (const pair of cookie.split(';')) {
+    const name = pair.slice(0, pair.indexOf('=') === -1 ? undefined : pair.indexOf('=')).trim();
+    if (name.length === 0) continue;
+    for (const wanted of bypassCookies) {
+      if (typeof wanted === 'string' ? wanted === name : wanted.test(name)) return true;
+    }
+  }
+  return false;
+}
+
 let orderingWarned = false;
 
 /**
@@ -148,6 +203,8 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
   const maxBodyBytes = options.maxBodyBytes ?? 5 * 1024 * 1024;
   const methods = new Set(options.methods ?? ['GET', 'HEAD']);
   const headerName = options.header === false ? null : (options.header ?? 'x-ssr-cache');
+  const cacheAuthenticated = options.cacheAuthenticated === true;
+  const bypassCookies = options.bypassCookies ?? [];
   const keyOf =
     options.key ??
     ((req: CacheableRequest) => `${req.method} ${req.originalUrl ?? req.url ?? '/'}`);
@@ -204,6 +261,11 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
     if (res.getHeader('set-cookie') !== undefined) return;
     const control = res.getHeader('cache-control');
     if (typeof control === 'string' && /(^|,)\s*(no-store|private)\s*(,|$)/i.test(control)) return;
+    // The handler is telling us this page depends on a header we do not key on, so a stored copy
+    // would be served to a request the handler would have answered differently. `Accept-Encoding`
+    // and the rest are fine; these three are not.
+    const vary = res.getHeader('vary');
+    if (typeof vary === 'string' && /(^|,)\s*(\*|cookie|authorization)\s*(,|$)/i.test(vary)) return;
     // Already encoded by the time it reached here, which means something downstream compressed it
     // and this middleware is wired above that. Storing these bytes would be storing gzip and
     // replaying it as if it were HTML, and a client asked to read that gets 63 characters of
@@ -310,6 +372,12 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
     next: (err?: unknown) => void,
   ): void {
     if (!methods.has(req.method ?? 'GET')) {
+      mark(res, 'BYPASS');
+      next();
+      return;
+    }
+    // before the key, because a personal request must miss the cache whatever the key says
+    if (carriesCredentials(req, cacheAuthenticated, bypassCookies)) {
       mark(res, 'BYPASS');
       next();
       return;

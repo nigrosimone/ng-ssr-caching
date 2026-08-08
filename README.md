@@ -19,7 +19,7 @@ your server produced from them.
 ✅ Answers `304 Not Modified` to a client that already has the page<br>
 ✅ TTL, with optional stale-while-revalidate<br>
 ✅ Bounded, least-recently-served eviction, and a body-size ceiling<br>
-✅ Refuses to cache what must not be cached: `Set-Cookie`, `no-store`, `private`, anything but 200<br>
+✅ Refuses to cache what must not be cached: `Authorization`, `Set-Cookie`, `no-store`, `private`, anything but 200<br>
 ✅ Works with any Express-compatible server, tested against Express and [Fulmine](https://www.npmjs.com/package/fulmine.js) side by side<br>
 ✅ No dependencies<br>
 
@@ -40,8 +40,8 @@ import { ssrCaching } from 'ng-ssr-caching';
 app.use(
   ssrCaching({
     ttl: 60_000,
-    // a page rendered for a signed-in visitor must never be handed to another one
-    key: (req) => (req.headers.cookie?.includes('session=') ? null : `${req.method} ${req.url}`),
+    // if your application signs people in with a cookie, name it here: see below
+    bypassCookies: ['session'],
   }),
 );
 
@@ -71,6 +71,36 @@ console, because a cache that silently never fills is an afternoon of wondering 
 
 That is the whole integration. Every response carries an `x-ssr-cache` header saying `HIT`, `MISS`,
 `STALE` or `BYPASS`, so you can see what it is doing before you trust it.
+
+## 🔒 Who is allowed to see a cached page
+
+This cache holds one page per URL and hands it to whoever asks for it next. That makes it a
+**shared** cache, and a shared cache has one rule it cannot be wrong about: a page rendered for a
+particular person must not be handed to the next person.
+
+Two things say the request is personal, and this package treats them differently because they are
+different.
+
+**`Authorization` is handled for you.** A request carrying that header is passed straight through:
+nothing is served to it from the cache, and nothing it produces is stored. RFC 9111 §3.5 requires
+exactly this of a shared cache, and the header is never ambiguous. If your bearer token genuinely
+changes nothing about the page, `cacheAuthenticated: true` opts back in, and that is a decision about
+your own data.
+
+**Cookies you have to name yourself**, because a cookie means nothing on its own. An analytics
+cookie says nothing about who you are, a session cookie says everything, and only you know which of
+yours is which, so this package does not guess:
+
+```ts
+ssrCaching({ bypassCookies: ['session', /^connect\.sid$/] });
+```
+
+A string matches a cookie of exactly that name, a RegExp is tested against each name. Exactly, so
+`session` does not accidentally match `sessionless`. If your application signs people in with a
+cookie and you leave this empty, one visitor's page will be served to the next one.
+
+Note that this is about the **request**. A `Set-Cookie` on the way out is refused separately and
+always: a response that hands out a session is about one visitor by definition.
 
 ## What it is worth
 
@@ -111,9 +141,11 @@ what lets a returning visitor be answered with an empty `304`.
 Silently, and on purpose:
 
 - anything that is not a `200`
+- any request carrying an `Authorization` header, which is also never served one
+- any request carrying one of your `bypassCookies`, likewise
 - any response carrying a `Set-Cookie`
 - any response whose `Cache-Control` says `no-store` or `private`
-- any request whose `key` returns `null`, which is how you exclude signed-in visitors
+- any request whose `key` returns `null`, which is the escape hatch for everything else
 - any body larger than `maxBodyBytes`, which is served normally and simply not remembered
 - any method outside `methods`, `GET` and `HEAD` by default
 
@@ -125,7 +157,7 @@ inside the HTML, so the browser does not fetch them again.
 
 Which means an SSR cache is not caching a template. It is caching **the data that was in it**. The
 `ttl` you choose is the staleness you are willing to serve on your API responses, not on your
-markup. Pick it from the data, and use `key` to exclude anything personal.
+markup. Pick it from the data, and read the section above about who gets to see it.
 
 ## Options
 
@@ -136,6 +168,8 @@ markup. Pick it from the data, and use `key` to exclude anything personal.
 | `maxEntries`           | `500`            | how many pages to keep; least recently served goes first   |
 | `maxBodyBytes`         | `5 MiB`          | bodies above this are served but never stored              |
 | `key`                  | method and url   | return `null` to bypass the cache for that request         |
+| `bypassCookies`        | `[]`             | cookie names that make a request personal, matched exactly |
+| `cacheAuthenticated`   | `false`          | let requests with `Authorization` use the cache            |
 | `shouldCache`          | -                | the last word on whether a rendered response may be stored |
 | `methods`              | `['GET','HEAD']` | which methods are eligible                                 |
 | `header`               | `'x-ssr-cache'`  | the header reporting HIT/MISS/STALE/BYPASS, or `false`     |
