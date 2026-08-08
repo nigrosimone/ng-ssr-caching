@@ -1,5 +1,17 @@
 # Changelog
 
+## [22.2.0](https://github.com/nigrosimone/ng-ssr-caching/compare/v22.1.0...v22.2.0) (2026-08-08)
+
+### 🚀 Features
+
+- a miss can announce the page assets in a 103, and the pieces are exported ([636eea5](https://github.com/nigrosimone/ng-ssr-caching/commit/636eea52e2bb8307be1ed3f22ae8174696ec4b6d))
+
+### 🧹 Chores
+
+- typescript 6.0 ([5fb4cbe](https://github.com/nigrosimone/ng-ssr-caching/commit/5fb4cbe77b23e61b679db6311cb3b166391b8c4a))
+
+**Full Changelog**: https://github.com/nigrosimone/ng-ssr-caching/compare/v22.1.0...v22.2.0
+
 ## [22.1.0](https://github.com/nigrosimone/ng-ssr-caching/compare/v22.0.0...v22.1.0) (2026-08-08)
 
 ### 🚀 Features

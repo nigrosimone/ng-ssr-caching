@@ -1,6 +1,6 @@
 {
   "name": "ng-ssr-caching",
-  "version": "22.1.0",
+  "version": "22.2.0",
   "description": "Cache for server-side rendered pages in Angular SSR (and any Express handler).",
   "repository": {
     "type": "git",
