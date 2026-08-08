@@ -234,8 +234,9 @@ This package exists for Angular SSR and the documentation above is written for i
 it caches an HTML response, and it has no dependencies and no idea what produced the page. So it
 works elsewhere, and the cases below are tested rather than assumed.
 
-There is a **[runnable React example](./examples/react)**, which opens on StackBlitz in one click:
-[stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/react](https://stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/react).
+Two runnable examples open on StackBlitz in one click, the same weather app rendered on the server
+and cached: **[Angular](https://stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/angular)**
+and **[React](https://stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/react)**.
 Load the page twice and watch the header go from MISS to HIT.
 
 **React SSR**, including `renderToPipeableStream`. A streamed render arrives as many `write()` calls

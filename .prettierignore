@@ -1,5 +1,2 @@
-
-# the examples carry an upstream application, kept in its own style rather than churned into ours
-examples/**/src
-examples/**/index.html
-examples/**/package-lock.json
+# the examples carry an upstream application with its own style and its own prettier config
+examples/

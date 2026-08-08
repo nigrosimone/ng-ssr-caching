@@ -1,0 +1,84 @@
+{
+  "hash": "51573c7c",
+  "configHash": "6e855838",
+  "lockfileHash": "bc1413d1",
+  "browserHash": "86adf4d0",
+  "optimized": {
+    "@angular/common": {
+      "src": "../../../../../../node_modules/@angular/common/fesm2022/common.mjs",
+      "file": "@angular_common.js",
+      "fileHash": "aa59c0e7",
+      "needsInterop": false
+    },
+    "@angular/common/http": {
+      "src": "../../../../../../node_modules/@angular/common/fesm2022/http.mjs",
+      "file": "@angular_common_http.js",
+      "fileHash": "5c87bc41",
+      "needsInterop": false
+    },
+    "@angular/core": {
+      "src": "../../../../../../node_modules/@angular/core/fesm2022/core.mjs",
+      "file": "@angular_core.js",
+      "fileHash": "d653fdb1",
+      "needsInterop": false
+    },
+    "@angular/core/rxjs-interop": {
+      "src": "../../../../../../node_modules/@angular/core/fesm2022/rxjs-interop.mjs",
+      "file": "@angular_core_rxjs-interop.js",
+      "fileHash": "d5903f36",
+      "needsInterop": false
+    },
+    "@angular/platform-browser": {
+      "src": "../../../../../../node_modules/@angular/platform-browser/fesm2022/platform-browser.mjs",
+      "file": "@angular_platform-browser.js",
+      "fileHash": "3fe6db7d",
+      "needsInterop": false
+    },
+    "rxjs": {
+      "src": "../../../../../../node_modules/rxjs/dist/esm5/index.js",
+      "file": "rxjs.js",
+      "fileHash": "44917eea",
+      "needsInterop": false
+    },
+    "rxjs/operators": {
+      "src": "../../../../../../node_modules/rxjs/dist/esm5/operators/index.js",
+      "file": "rxjs_operators.js",
+      "fileHash": "5ec38b59",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "_resource-chunk-Ms-sCz72": {
+      "file": "_resource-chunk-Ms-sCz72.js",
+      "isDynamicEntry": false
+    },
+    "_xhr-chunk-B9QKCQxJ": {
+      "file": "_xhr-chunk-B9QKCQxJ.js",
+      "isDynamicEntry": false
+    },
+    "common-DBYLQG2L": {
+      "file": "common-DBYLQG2L.js",
+      "isDynamicEntry": false
+    },
+    "core-BaIFa2px": {
+      "file": "core-BaIFa2px.js",
+      "isDynamicEntry": false
+    },
+    "esm5-1bPjeIHk": {
+      "file": "esm5-1bPjeIHk.js",
+      "isDynamicEntry": false
+    },
+    "http-Cml7jhzQ": {
+      "file": "http-Cml7jhzQ.js",
+      "isDynamicEntry": false
+    },
+    "operators-cDZ5DjJy": {
+      "file": "operators-cDZ5DjJy.js",
+      "isDynamicEntry": false
+    },
+    "zipWith-DkrnN79P": {
+      "file": "zipWith-DkrnN79P.js",
+      "isDynamicEntry": false
+    }
+  }
+}
