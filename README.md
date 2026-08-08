@@ -136,7 +136,7 @@ markup. Pick it from the data, and use `key` to exclude anything personal.
 | `maxEntries`           | `500`            | how many pages to keep; least recently served goes first   |
 | `maxBodyBytes`         | `5 MiB`          | bodies above this are served but never stored              |
 | `key`                  | method and url   | return `null` to bypass the cache for that request         |
-| `shouldCache`          | —                | the last word on whether a rendered response may be stored |
+| `shouldCache`          | -                | the last word on whether a rendered response may be stored |
 | `methods`              | `['GET','HEAD']` | which methods are eligible                                 |
 | `header`               | `'x-ssr-cache'`  | the header reporting HIT/MISS/STALE/BYPASS, or `false`     |
 
