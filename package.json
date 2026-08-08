@@ -50,7 +50,9 @@
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "test": "node --test test/*.test.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "release:bump": "node .github/scripts/release.mjs bump",
+    "release:notes": "node .github/scripts/release.mjs notes"
   },
   "devDependencies": {
     "compression": "^1.8.1",

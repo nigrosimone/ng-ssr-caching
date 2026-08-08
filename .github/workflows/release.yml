@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Version bump ("auto" picks minor when there are feat commits, patch otherwise)'
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+      version:
+        description: 'Explicit version, e.g. 23.0.0 (overrides the bump: majors follow the Angular major)'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Build and pack everything, but skip npm publish, git push and the GitHub release'
+        type: boolean
+        default: false
+
+# `contents: write` pushes the release commit, the tag and the GitHub release,
+# `id-token: write` is what npm's trusted publisher trusts instead of a token
+permissions:
+  contents: write
+  id-token: write
+
+# two releases in flight would race on the version bump
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  HUSKY: 0
+  LIB: ng-ssr-caching
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Only release from the default branch
+        if: github.ref_name != github.event.repository.default_branch
+        run: |
+          echo "::error::releases must be cut from ${{ github.event.repository.default_branch }}, got ${{ github.ref_name }}"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          # the changelog needs the whole history and the tags
+          fetch-depth: 0
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Build
+        run: npm run build
+
+      # every case runs against express and against fulmine, and the two have to agree
+      - name: Test on both servers
+        run: npm test
+
+      - name: Decide the next version
+        id: bump
+        run: npm run release:bump -- --type "${{ inputs.release_type }}"
+
+      - name: Bump the version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+          BUMP: ${{ steps.bump.outputs.bump }}
+        run: |
+          CURRENT="$(node -p "require('./package.json').version")"
+          if [ -n "$REQUESTED" ]; then
+            # the major tracks the Angular major, so it is always typed in by hand
+            if ! printf '%s' "$REQUESTED" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::\"$REQUESTED\" is not a valid version"
+              exit 1
+            fi
+            HIGHEST="$(printf '%s\n%s\n' "$CURRENT" "$REQUESTED" | sort -V | tail -1)"
+            if [ "$HIGHEST" != "$REQUESTED" ]; then
+              echo "::error::$REQUESTED is older than the current $CURRENT"
+              exit 1
+            fi
+            npm version "$REQUESTED" --no-git-tag-version --allow-same-version
+          else
+            npm version "$BUMP" --no-git-tag-version
+          fi
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Releasing $LIB v$VERSION"
+
+      - name: Fail if the version is already on npm
+        run: |
+          if npm view "$LIB@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::$LIB@$VERSION is already published"
+            exit 1
+          fi
+
+      - name: Generate the changelog
+        run: |
+          npm run release:notes -- \
+            --version "$VERSION" \
+            --notes-out RELEASE_NOTES.md \
+            --changelog CHANGELOG.md
+          npx prettier --write CHANGELOG.md
+          cat RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+
+      # the version moved after the build above, and it is package.json that ships
+      - name: Rebuild at the release version
+        run: npm run build
+
+      - name: Ensure npm supports trusted publishing
+        if: ${{ !inputs.dry_run }}
+        # authenticating through OIDC, instead of an NPM_TOKEN, needs npm >= 11.5.1
+        run: |
+          if [ "$(printf '11.5.1\n%s\n' "$(npm -v)" | sort -V | head -1)" != "11.5.1" ]; then
+            npm install -g npm@latest
+          fi
+          npm -v
+
+      - name: Publish to npm
+        if: ${{ !inputs.dry_run }}
+        # no token: npm trusts this workflow through the OIDC identity of the runner
+        run: npm publish --access public --provenance --ignore-scripts
+
+      - name: Commit, tag and push
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore(release): v$VERSION [skip ci]"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "HEAD:${{ github.ref_name }}" --follow-tags
+
+      - name: Create the GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" --title "v$VERSION" --notes-file RELEASE_NOTES.md --verify-tag
+
+      - name: Pack the tarball
+        if: ${{ inputs.dry_run }}
+        run: npm pack --pack-destination "$GITHUB_WORKSPACE"
+
+      - name: Upload the dry-run output
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dry-run-${{ steps.version.outputs.version }}
+          path: |
+            *.tgz
+            RELEASE_NOTES.md
+            CHANGELOG.md
+          retention-days: 7
