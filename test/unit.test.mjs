@@ -295,3 +295,37 @@ test('a hit is served without asking the handler, even when the handler would ha
   assert.strictEqual(hit.getHeader('content-length'), String(Buffer.byteLength(html)));
   assert.match(String(hit.getHeader('etag')), /^W\/"/);
 });
+
+// --- the defaults, and a request that barely is one ---------------------------------------------
+
+test('ssrCaching() with nothing passed to it is the table in the readme', () => {
+  const cache = ssrCaching();
+
+  through(cache, request(), renderHtml);
+  const hit = through(cache, request());
+  // header defaults to x-ssr-cache, ttl to a minute, so this is still fresh
+  assert.strictEqual(hit.getHeader('x-ssr-cache'), 'HIT');
+  // the key defaults to the method and the url
+  assert.deepStrictEqual(cache.keys(), ['GET /page']);
+  // methods defaults to GET and HEAD, so a POST is not eligible
+  const posted = through(cache, request({ method: 'POST' }), renderHtml);
+  assert.strictEqual(posted.getHeader('x-ssr-cache'), 'BYPASS');
+  // and early hints are off, so nothing was announced even though a page has been stored
+  assert.strictEqual(cache.stats().hinted, 0);
+});
+
+test('a request that says almost nothing is still given a key', () => {
+  // node always fills both of these in. The default key does not rely on that.
+  const noUrl = ssrCaching({ ttl: 60_000 });
+  through(noUrl, { method: 'GET', headers: {} }, renderHtml);
+  assert.deepStrictEqual(noUrl.keys(), ['GET /']);
+
+  const noMethod = ssrCaching({ ttl: 60_000 });
+  const res = through(noMethod, { headers: {}, url: '/page' }, renderHtml);
+  // eligibility reads a missing method as a GET, so the request is cached rather than waved
+  // through. The key prints it as it found it, which is the one place the two disagree — no real
+  // server produces a request without a method, so this is about not crashing, not about the name.
+  assert.strictEqual(res.getHeader('x-ssr-cache'), 'MISS');
+  assert.strictEqual(noMethod.keys().length, 1);
+  assert.match(noMethod.keys()[0], / \/page$/);
+});

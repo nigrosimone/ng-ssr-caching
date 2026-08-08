@@ -122,7 +122,14 @@ both(
 
 both(
   'a key of null bypasses, which is where a logged-in visitor belongs',
-  { ttl: 60_000, key: (req) => (req.headers.authorization ? null : `GET ${req.url}`) },
+  // Not Authorization: that one is refused before the key is ever asked, so a key returning null
+  // on it would be dead code dressed as a test. This is the case the escape hatch is actually for
+  // — an application recognising its own session cookie, with bypassCookies left unset.
+  {
+    ttl: 60_000,
+    key: (req) =>
+      /(^|;\s*)sid=/.test(req.headers.cookie ?? '') ? null : `GET ${req.originalUrl ?? req.url}`,
+  },
   {
     setup(app) {
       app.get('/page', page());
@@ -130,13 +137,28 @@ both(
     async run({ get, cache }) {
       rendered = 0;
       const anonymous = await get('/page');
-      const authed = await get('/page', { headers: { authorization: 'Bearer x' } });
+      await anonymous.text();
+      const signedIn = await get('/page', { headers: { cookie: 'sid=alice' } });
+      await signedIn.text();
+      // and the page rendered for her was not put where the next visitor would find it
+      const next = await get('/page');
+      await next.text();
       return {
         rendered,
         anonymousMark: anonymous.headers.get('x-ssr-cache'),
-        authedMark: authed.headers.get('x-ssr-cache'),
+        signedInMark: signedIn.headers.get('x-ssr-cache'),
+        nextMark: next.headers.get('x-ssr-cache'),
         entries: cache.stats().entries,
+        keys: cache.keys(),
       };
+    },
+    expect: {
+      rendered: 2,
+      anonymousMark: 'MISS',
+      signedInMark: 'BYPASS',
+      nextMark: 'HIT',
+      entries: 1,
+      keys: ['GET /page'],
     },
   },
 );
@@ -505,6 +527,11 @@ test('the links are read out of the page, and only the ones a 103 can carry', ()
 
 test('a page that declares nothing produces nothing', () => {
   assert.deepStrictEqual(earlyHintLinksFrom('<html><body><h1>hi</h1></body></html>'), []);
+  // a link tag with nothing to fetch is not a resource, whatever it says it is
+  assert.deepStrictEqual(
+    earlyHintLinksFrom('<link rel="stylesheet"><link rel="preconnect"><link rel="modulepreload">'),
+    [],
+  );
 });
 
 test('nothing is announced until a page has been seen, then every miss carries it', async () => {

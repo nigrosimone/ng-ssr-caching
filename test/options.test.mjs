@@ -38,6 +38,59 @@ test('an empty body has a validator too, and it is the well-known one', () => {
   assert.notStrictEqual(weakEtag(Buffer.from('page')), weakEtag(Buffer.from('pagf')));
 });
 
+// --- reading the Cookie header ------------------------------------------------------------------
+
+both(
+  'a cookie header that is malformed, or missing altogether',
+  // With bypassCookies configured, every request goes through the parser, including the ones that
+  // carry nothing and the ones that carry nonsense. Getting this wrong in either direction is a
+  // leak or a cache that never fills, so the odd shapes are worth naming.
+  { ttl: 60_000, bypassCookies: ['session'] },
+  {
+    setup(app) {
+      app.get('/page', page());
+    },
+    async run({ get, cache }) {
+      reset();
+      // the common case on a cookie-configured application: a visitor who has none yet
+      const none = await get('/page');
+      await none.text();
+      // a segment with no `=` at all is a name with an empty value, not a parse error
+      const flag = await get('/page', { headers: { cookie: 'justaflag' } });
+      await flag.text();
+      // empty segments, from a trailing or doubled semicolon
+      const empty = await get('/page', { headers: { cookie: ';;theme=dark;' } });
+      await empty.text();
+      // and the one that matters: a valueless cookie is still a cookie by that name
+      const valueless = await get('/page', { headers: { cookie: 'session' } });
+      await valueless.text();
+      // whitespace around the name is the header's, not the name's
+      const spaced = await get('/page', { headers: { cookie: 'ga=1;   session=alice' } });
+      await spaced.text();
+
+      return {
+        rendered: counter.rendered,
+        noneMark: none.headers.get('x-ssr-cache'),
+        flagMark: flag.headers.get('x-ssr-cache'),
+        emptyMark: empty.headers.get('x-ssr-cache'),
+        valuelessMark: valueless.headers.get('x-ssr-cache'),
+        spacedMark: spaced.headers.get('x-ssr-cache'),
+        entries: cache.stats().entries,
+      };
+    },
+    expect: {
+      // one render for the miss, one each for the two that bypassed
+      rendered: 3,
+      noneMark: 'MISS',
+      flagMark: 'HIT',
+      emptyMark: 'HIT',
+      valuelessMark: 'BYPASS',
+      spacedMark: 'BYPASS',
+      entries: 1,
+    },
+  },
+);
+
 // --- who decides what is stored -------------------------------------------------------------------
 
 both(
