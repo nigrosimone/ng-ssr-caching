@@ -234,6 +234,10 @@ This package exists for Angular SSR and the documentation above is written for i
 it caches an HTML response, and it has no dependencies and no idea what produced the page. So it
 works elsewhere, and the cases below are tested rather than assumed.
 
+There is a **[runnable React example](./examples/react)**, which opens on StackBlitz in one click:
+[stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/react](https://stackblitz.com/github/nigrosimone/ng-ssr-caching/tree/main/examples/react).
+Load the page twice and watch the header go from MISS to HIT.
+
 **React SSR**, including `renderToPipeableStream`. A streamed render arrives as many `write()` calls
 and is stored as the whole page, so the second visitor gets it in one piece, with the ETag and the
 `304` that come with it. Measured on a 40-boundary render: one render for two requests, identical
