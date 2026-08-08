@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import express from 'express';
 import fulmine from 'fulmine.js';
+import compression from 'compression';
 import { ssrCaching } from '../dist/esm/index.js';
 
 const SERVERS = [
@@ -19,11 +20,12 @@ const SERVERS = [
  * @param {(app: any, cache: any) => void} setup
  * @param {object} [options] passed to ssrCaching
  */
-function serve(factory, setup, options) {
+function serve(factory, setup, options, wireBefore) {
   return new Promise((resolve) => {
     const app = factory();
     app.set('etag', false);
     const cache = ssrCaching(options);
+    if (wireBefore) wireBefore(app);
     app.use(cache);
     setup(app, cache);
     const server = app.listen(0, () => {
@@ -42,7 +44,7 @@ function both(name, options, body) {
   test(name, async () => {
     const seen = [];
     for (const [label, factory] of SERVERS) {
-      const ctx = await serve(factory, body.setup, options);
+      const ctx = await serve(factory, body.setup, options, body.wireBefore);
       try {
         seen.push([label, await body.run(ctx)]);
       } finally {
@@ -302,6 +304,60 @@ both(
       await get('/a'); // touched, so /b is now the least recently served
       await get('/c');
       return { keys: cache.keys(), evicted: cache.stats().evicted };
+    },
+  },
+);
+
+// Compression, both ways round. Response wrappers nest in reverse registration order, so one of
+// these two wirings has the cache seeing the page before it is compressed and the other has it
+// seeing gzip. The second one used to store those bytes and replay them as HTML, which reached the
+// client as 63 characters of rubbish; now it refuses, so a mistake costs the cache and never the
+// page.
+both(
+  'compression registered first: the page is cached and served correctly',
+  { ttl: 60_000 },
+  {
+    setup(app) {
+      app.get('/compressed', page());
+    },
+    wireBefore: (app) => app.use(compression({ threshold: 0 })),
+    async run({ get, cache }) {
+      const opts = { headers: { 'accept-encoding': 'gzip' } };
+      const first = await get('/compressed', opts);
+      const firstBody = await first.text();
+      const second = await get('/compressed', opts);
+      const secondBody = await second.text();
+      return {
+        firstOk: firstBody.includes('rendered'),
+        secondOk: secondBody.includes('rendered'),
+        same: firstBody === secondBody,
+        mark: second.headers.get('x-ssr-cache'),
+        stored: cache.stats().stored,
+      };
+    },
+  },
+);
+
+both(
+  'compression registered after: nothing is cached, and the page is still correct',
+  { ttl: 60_000 },
+  {
+    setup(app) {
+      app.use(compression({ threshold: 0 }));
+      app.get('/compressed', page());
+    },
+    async run({ get, cache }) {
+      const opts = { headers: { 'accept-encoding': 'gzip' } };
+      const first = await get('/compressed', opts);
+      const firstBody = await first.text();
+      const second = await get('/compressed', opts);
+      const secondBody = await second.text();
+      return {
+        firstOk: firstBody.includes('rendered'),
+        secondOk: secondBody.includes('rendered'),
+        same: firstBody === secondBody,
+        stored: cache.stats().stored,
+      };
     },
   },
 );

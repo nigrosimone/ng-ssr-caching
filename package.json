@@ -53,6 +53,7 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "compression": "^1.8.1",
     "express": "^5.1.0",
     "fulmine.js": "^5.5.0",
     "prettier": "^3.9.6",

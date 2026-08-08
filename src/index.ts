@@ -100,6 +100,23 @@ const NOT_REPLAYED = new Set([
 
 const REPLAYED_CANDIDATES = ['content-type', 'content-language', 'vary', 'link', 'cache-control'];
 
+let orderingWarned = false;
+
+/**
+ * Said once, and out loud, because the alternative is a cache that quietly never stores anything
+ * and an afternoon spent wondering why. This is a wiring mistake rather than a policy decision.
+ */
+function warnAboutOrdering(): void {
+  if (orderingWarned) return;
+  orderingWarned = true;
+  console.warn(
+    '[ng-ssr-caching] Not caching: the response arrived already compressed. Response wrappers ' +
+      'nest in reverse registration order, so ssrCaching() has to be registered AFTER ' +
+      'compression() to see the page before it is compressed. Nothing is broken, but nothing is ' +
+      'being cached either.',
+  );
+}
+
 export interface SsrCachingMiddleware {
   (req: CacheableRequest, res: CacheableResponse, next: (err?: unknown) => void): void;
   /** What the cache has been doing. */
@@ -187,6 +204,16 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
     if (res.getHeader('set-cookie') !== undefined) return;
     const control = res.getHeader('cache-control');
     if (typeof control === 'string' && /(^|,)\s*(no-store|private)\s*(,|$)/i.test(control)) return;
+    // Already encoded by the time it reached here, which means something downstream compressed it
+    // and this middleware is wired above that. Storing these bytes would be storing gzip and
+    // replaying it as if it were HTML, and a client asked to read that gets 63 characters of
+    // rubbish where the page should be: measured, not imagined. Response wrappers nest in reverse
+    // registration order, so the cache has to be registered AFTER compression to see the page
+    // before it is squeezed.
+    if (res.getHeader('content-encoding') !== undefined) {
+      warnAboutOrdering();
+      return;
+    }
     if (shouldCache && !shouldCache(req, res)) return;
 
     const headers: [string, number | string | string[]][] = [];

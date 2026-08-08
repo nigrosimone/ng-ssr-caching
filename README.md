@@ -54,6 +54,21 @@ app.use((req, res, next) => {
 });
 ```
 
+### If you use `compression()`, register it first
+
+```ts
+app.use(compression()); // first
+app.use(ssrCaching()); // second
+```
+
+Response wrappers nest in reverse registration order, so the middleware registered **last** is the
+one that sees the body **first**. Registered after `compression()`, this cache sees the page as
+Angular rendered it. Registered before it, it would see gzip, and storing that would mean replaying
+compressed bytes as if they were HTML.
+
+It refuses to store an already-encoded response rather than doing that, and says so once on the
+console, because a cache that silently never fills is an afternoon of wondering why.
+
 That is the whole integration. Every response carries an `x-ssr-cache` header saying `HIT`, `MISS`,
 `STALE` or `BYPASS`, so you can see what it is doing before you trust it.
 
