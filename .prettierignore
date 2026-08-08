@@ -2,3 +2,4 @@
 # the examples carry an upstream application, kept in its own style rather than churned into ours
 examples/**/src
 examples/**/index.html
+examples/**/package-lock.json
