@@ -20,7 +20,9 @@ your server produced from them.
 ✅ TTL, with optional stale-while-revalidate<br>
 ✅ Bounded, least-recently-served eviction, and a body-size ceiling<br>
 ✅ Refuses to cache what must not be cached: `Authorization`, `Set-Cookie`, `no-store`, `private`, anything but 200<br>
+✅ Optional `103 Early Hints` on a miss, so the browser fetches the bundle while the server renders<br>
 ✅ Works with any Express-compatible server, tested against Express and [Fulmine](https://www.npmjs.com/package/fulmine.js) side by side<br>
+✅ Angular is what it is written for, but nothing in it is Angular: React SSR, Fastify and bare node work too<br>
 ✅ No dependencies<br>
 
 ## Get Started
@@ -71,6 +73,54 @@ console, because a cache that silently never fills is an afternoon of wondering 
 
 That is the whole integration. Every response carries an `x-ssr-cache` header saying `HIT`, `MISS`,
 `STALE` or `BYPASS`, so you can see what it is doing before you trust it.
+
+## ⚡ Telling the browser what to fetch, before the page exists
+
+A miss is expensive because the server has to render. While it does, the browser sits idle: it
+asked for a document and will not learn that the page needs `main-*.js` until the document arrives,
+which is after the render has finished. The two happen one after the other when they could happen
+at once.
+
+`103 Early Hints` fixes that, and this middleware is in the right place to send it: on a miss it
+runs **before** the render, and it already knows what the page declares, because it read that from
+the first page it stored.
+
+```ts
+ssrCaching({ earlyHints: true });
+```
+
+Measured on an Angular 22 application over HTTP/2 at 1.6 Mbps, time to hydration, seven alternating
+rounds:
+
+| server render time | with hints | without | sooner by |
+| :----------------- | ---------: | ------: | --------: |
+| 50 ms              |    1451 ms | 1692 ms |    241 ms |
+| 300 ms             |    1466 ms | 1941 ms |    475 ms |
+| 800 ms             |    1464 ms | 2458 ms |    994 ms |
+
+The shape is the point. **With hints the time stops moving with the render**, because the bundle
+downloads while the page is being made. Without them the render is added to the total. So the
+slower your render, the more this is worth, up to what it costs to fetch the assets.
+
+Three things decide whether it does anything for you, and it is better to know now than to wonder
+later:
+
+- **The browser must be speaking HTTP/2 or HTTP/3.** Browsers ignore a `103` over HTTP/1.1.
+  `earlyHints: true` therefore sends it only when the request itself arrived over HTTP/2. Behind a
+  proxy that terminates HTTP/2 the request reaches your process as HTTP/1.1, and whether the proxy
+  forwards a `103` is the proxy's business, so `earlyHints: 'always'` sends it regardless and leaves
+  that judgement to you.
+- **The server must be able to send an informational response.** Node can, since 18.11. Servers
+  built on µWebSockets.js, including [Fulmine](https://www.npmjs.com/package/fulmine.js), have no
+  API for it, and there this option does nothing at all. `stats().hinted` says how many actually
+  went out, which is the honest way to find out.
+- **A hit gains nothing.** There is no render to overlap with, so a `103` is only ever sent on a
+  miss. That is also exactly where it is worth having.
+
+Nothing is invented: the announced resources are the ones the document itself declares. Only
+`preconnect` and `preload` are used, because those are the only relationships browsers act on in a
+`103`, and a module script is announced with `crossorigin` because a module is fetched in CORS mode
+and without it the browser downloads the bundle twice.
 
 ## 🔒 Who is allowed to see a cached page
 
@@ -167,6 +217,7 @@ markup. Pick it from the data, and read the section above about who gets to see 
 | `staleWhileRevalidate` | `0`              | how long after `ttl` a stale page is still served          |
 | `maxEntries`           | `500`            | how many pages to keep; least recently served goes first   |
 | `maxBodyBytes`         | `5 MiB`          | bodies above this are served but never stored              |
+| `earlyHints`           | `false`          | announce the page's assets in a `103` on a miss            |
 | `key`                  | method and url   | return `null` to bypass the cache for that request         |
 | `bypassCookies`        | `[]`             | cookie names that make a request personal, matched exactly |
 | `cacheAuthenticated`   | `false`          | let requests with `Authorization` use the cache            |
@@ -176,6 +227,44 @@ markup. Pick it from the data, and read the section above about who gets to see 
 
 The middleware also carries `stats()`, `purge(key?)` and `keys()`, so a deploy can drop what it
 needs to and a dashboard can see what is happening.
+
+## It is written for Angular, and nothing in it is Angular
+
+This package exists for Angular SSR and the documentation above is written for it. The code is not:
+it caches an HTML response, and it has no dependencies and no idea what produced the page. So it
+works elsewhere, and the cases below are tested rather than assumed.
+
+**React SSR**, including `renderToPipeableStream`. A streamed render arrives as many `write()` calls
+and is stored as the whole page, so the second visitor gets it in one piece, with the ETag and the
+`304` that come with it. Measured on a 40-boundary render: one render for two requests, identical
+bytes, `MISS` then `HIT`.
+
+Everything in [who is allowed to see a cached page](#-who-is-allowed-to-see-a-cached-page) applies
+unchanged, and the warning about the cached HTML containing your data applies harder: React
+serializes its own data into the document exactly as Angular serializes the TransferState.
+
+**Any server with the Express middleware shape.** Fastify through
+[`@fastify/middie`](https://github.com/fastify/middie), and a bare `node:http` server by calling it
+yourself:
+
+```js
+import { createServer } from 'node:http';
+import { ssrCaching } from 'ng-ssr-caching';
+
+const cache = ssrCaching({ ttl: 60_000 });
+
+createServer((req, res) => {
+  cache(req, res, () => {
+    // your render
+  });
+}).listen(3000);
+```
+
+**And two pieces on their own**, for a server this middleware does not fit:
+
+- `weakEtag(body)` gives the validator Express would have produced. It is the whole trick of this
+  package: computed once at store time rather than on every hit.
+- `earlyHintLinksFrom(html)` reads a rendered page and returns the `Link` values a `103` can carry.
 
 ## License
 

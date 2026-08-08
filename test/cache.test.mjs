@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import express from 'express';
 import fulmine from 'fulmine.js';
 import compression from 'compression';
+import { request as httpRequest } from 'node:http';
 import { ssrCaching } from '../dist/esm/index.js';
 
 const SERVERS = [
@@ -522,3 +523,109 @@ both(
     },
   },
 );
+
+// --- 103 Early Hints ---------------------------------------------------------------------------
+// These do not run through `both()`: the whole point is that the two servers differ here, because
+// one can send an informational response and the other has no API for it.
+
+import { earlyHintLinksFrom } from '../dist/esm/index.js';
+
+test('the links are read out of the page, and only the ones a 103 can carry', () => {
+  const page = `<!doctype html><html><head>
+    <link rel="preconnect" href="https://api.example">
+    <link rel="stylesheet" href="styles-ABC.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="styles-ABC.css">
+    <link rel="modulepreload" href="chunk-ABC.js">
+    <link rel="icon" href="favicon.ico">
+    </head><body><script src="main-ABC.js" type="module"></script></body></html>`;
+
+  assert.deepStrictEqual(earlyHintLinksFrom(page), [
+    '<https://api.example>; rel=preconnect',
+    // the deferred copy is skipped, the plain one is not
+    '</styles-ABC.css>; rel=preload; as=style',
+    // modulepreload is meaningless in a 103, so it is said in the way that is not
+    '</chunk-ABC.js>; rel=preload; as=script; crossorigin',
+    // crossorigin, or the browser cannot match the preload to the module fetch and downloads twice
+    '</main-ABC.js>; rel=preload; as=script; crossorigin',
+  ]);
+});
+
+test('a page that declares nothing produces nothing', () => {
+  assert.deepStrictEqual(earlyHintLinksFrom('<html><body><h1>hi</h1></body></html>'), []);
+});
+
+test('nothing is announced until a page has been seen, then every miss carries it', async () => {
+  const app = express();
+  app.set('etag', false);
+  const cache = ssrCaching({ ttl: 60_000, earlyHints: 'always' });
+  app.use(cache);
+  app.get('/:page', (req, res) => {
+    res.setHeader('content-type', 'text/html;charset=UTF-8');
+    res.end('<html><head><link rel="stylesheet" href="s.css"></head><body>page</body></html>');
+  });
+
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const port = server.address().port;
+
+  const hintsFor = (path) =>
+    new Promise((resolve) => {
+      const req = httpRequest({ port, path }, (res) => {
+        res.resume();
+        res.once('end', () => resolve(seen));
+      });
+      let seen = null;
+      req.on('information', (info) => (seen = info.headers.link));
+      req.end();
+    });
+
+  // the first miss has nothing to announce yet: no page has ever been stored
+  assert.strictEqual(await hintsFor('/one'), null);
+  // the second is a different page, so another miss, and by now the links are known
+  assert.strictEqual(await hintsFor('/two'), '</s.css>; rel=preload; as=style');
+  assert.strictEqual(cache.stats().hinted, 1);
+
+  // a hit gains nothing from a hint, and gets none
+  assert.strictEqual(await hintsFor('/two'), null);
+  assert.strictEqual(cache.stats().hinted, 1);
+
+  server.close();
+});
+
+test('nothing is sent over HTTP/1.1 unless it is asked for, and never on a server without the API', async () => {
+  // true, rather than 'always', means only an HTTP/2 request gets one, and this one is HTTP/1.1
+  const app = express();
+  app.set('etag', false);
+  const cache = ssrCaching({ ttl: 60_000, earlyHints: true });
+  app.use(cache);
+  app.get('/:page', (req, res) => {
+    res.setHeader('content-type', 'text/html;charset=UTF-8');
+    res.end('<html><head><link rel="stylesheet" href="s.css"></head><body>page</body></html>');
+  });
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const port = server.address().port;
+  await fetch(`http://localhost:${port}/one`).then((r) => r.text());
+  await fetch(`http://localhost:${port}/two`).then((r) => r.text());
+  assert.strictEqual(cache.stats().hinted, 0);
+  server.close();
+
+  // and on fulmine, which has no writeEarlyHints at all, asking for it changes nothing
+  const app2 = fulmine();
+  app2.set('etag', false);
+  const cache2 = ssrCaching({ ttl: 60_000, earlyHints: 'always' });
+  app2.use(cache2);
+  app2.get('/:page', (req, res) => {
+    res.setHeader('content-type', 'text/html;charset=UTF-8');
+    res.end('<html><head><link rel="stylesheet" href="s.css"></head><body>page</body></html>');
+  });
+  const server2 = app2.listen(0, async () => {
+    const port2 = (server2.address ? server2 : app2).address().port;
+    await fetch(`http://localhost:${port2}/one`).then((r) => r.text());
+    const second = await fetch(`http://localhost:${port2}/two`);
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(cache2.stats().hinted, 0);
+    app2.close ? app2.close() : server2.close();
+  });
+  await new Promise((r) => setTimeout(r, 400));
+});
