@@ -5,6 +5,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib';
 
 /** Enough of a node response for what this middleware touches, so neither server is required here. */
 export interface CacheableResponse {
@@ -99,11 +100,21 @@ export interface SsrCachingOptions {
    *   proxy forwards a `103` is the proxy's business: `'always'` sends it regardless and leaves
    *   that decision to you.
    * - **The server must be able to send an informational response.** Node can. Servers built on
-   *   µWebSockets.js, Fulmine among them, have no API for it, and there this option does nothing.
+   *   µWebSockets.js, Fulmine among them, have no API for it: Fulmine accepts the call and sends
+   *   nothing, so `hinted` counts it but the browser never sees it.
    * - **A hit gains nothing**, because there is no render to overlap with. It is only ever sent on
    *   a miss.
    */
   earlyHints?: boolean | 'always';
+  /**
+   * Whether a stored page also keeps a brotli and a gzip copy, made once in the background, so a
+   * hit goes out compressed without compressing again. Default false.
+   *
+   * With `compression()` in front, every hit compresses the whole page again, and that costs ten
+   * times what the hit itself does. `compression()` passes an encoded body through untouched, so
+   * the two work together. With nothing in front, turning this on is what starts compressing.
+   */
+  compress?: boolean;
   /** Which methods are eligible. Default GET and HEAD. */
   methods?: readonly string[];
   /** The header that reports HIT, MISS, STALE or BYPASS. Set false to send nothing. Default "x-ssr-cache". */
@@ -118,7 +129,7 @@ export interface SsrCachingStats {
   evicted: number;
   notModified: number;
   entries: number;
-  /** How many misses went out with a 103 in front of them. */
+  /** How many misses handed a 103 to the server, which may drop it, see `earlyHints`. */
   hinted: number;
 }
 
@@ -130,6 +141,64 @@ interface Entry {
   headers: [string, number | string | string[]][];
   freshUntil: number;
   staleUntil: number;
+  /** Set once both copies are ready, when `compress` is on. */
+  encoded?: { br: Buffer; gzip: Buffer };
+}
+
+const BROTLI_OPTIONS = { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6 } };
+const GZIP_OPTIONS = { level: 9 };
+/** Below this compression() does not compress either. */
+const COMPRESS_THRESHOLD = 1024;
+
+/** Makes the two copies off the event loop. On any error it gives up, the plain page is still there. */
+function precompress(entry: Entry): void {
+  let pending = 2;
+  let br: Buffer | undefined;
+  let gz: Buffer | undefined;
+  const done = (): void => {
+    if (--pending === 0 && br !== undefined && gz !== undefined) entry.encoded = { br, gzip: gz };
+  };
+  brotliCompress(entry.body, BROTLI_OPTIONS, (err, out) => {
+    if (!err && out.length < entry.length) br = out;
+    done();
+  });
+  gzip(entry.body, GZIP_OPTIONS, (err, out) => {
+    if (!err && out.length < entry.length) gz = out;
+    done();
+  });
+}
+
+let lastAccept: string | undefined;
+let lastPick: 'br' | 'gzip' | null = null;
+
+/** br or gzip, whichever the client ranks higher (br on a tie), or null. The last answer is kept. */
+function pickEncoding(header: string | string[] | undefined): 'br' | 'gzip' | null {
+  if (typeof header !== 'string') return null;
+  if (header === lastAccept) return lastPick;
+  let br = -1;
+  let gz = -1;
+  let any = -1;
+  for (const part of header.split(',')) {
+    const semi = part.indexOf(';');
+    const name = (semi === -1 ? part : part.slice(0, semi)).trim().toLowerCase();
+    const q = semi === -1 ? 1 : Number(/\bq\s*=\s*([0-9.]+)/i.exec(part.slice(semi))?.[1] ?? 1);
+    if (name === 'br') br = q;
+    else if (name === 'gzip') gz = q;
+    else if (name === '*') any = q;
+  }
+  if (br === -1) br = any;
+  if (gz === -1) gz = any;
+  const pick = br > 0 && br >= gz ? 'br' : gz > 0 ? 'gzip' : null;
+  lastAccept = header;
+  lastPick = pick;
+  return pick;
+}
+
+/** A Vary value with Accept-Encoding in it, added once. */
+function withAcceptEncoding(vary: number | string | string[] | undefined): string {
+  const current = vary === undefined ? '' : Array.isArray(vary) ? vary.join(', ') : String(vary);
+  if (/(^|,)\s*(accept-encoding|\*)\s*(,|$)/i.test(current)) return current;
+  return current.trim().length === 0 ? 'Accept-Encoding' : current + ', Accept-Encoding';
 }
 
 /**
@@ -295,6 +364,7 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
   const cacheAuthenticated = options.cacheAuthenticated === true;
   const bypassCookies = options.bypassCookies ?? [];
   const earlyHints = options.earlyHints ?? false;
+  const compress = options.compress === true;
 
   /** Learned from the first page stored, then reused: an application serves the same bundles. */
   let hintLinks: string[] | null = null;
@@ -340,9 +410,18 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
     for (const [name, value] of entry.headers) res.setHeader(name, value);
     // the two that make a hit cheap: neither is recomputed, both were settled when it was stored
     res.setHeader('etag', entry.etag);
-    res.setHeader('content-length', String(entry.length));
     mark(res, what);
-    res.end(req.method === 'HEAD' ? undefined : entry.body);
+    if (req.method === 'HEAD') {
+      res.setHeader('content-length', String(entry.length));
+      res.end();
+      return;
+    }
+    const encoding = entry.encoded ? pickEncoding(req.headers['accept-encoding']) : null;
+    const body = encoding === null ? entry.body : entry.encoded![encoding];
+    // compression() in front sees the Content-Encoding and passes the body through as it is
+    if (encoding !== null) res.setHeader('content-encoding', encoding);
+    res.setHeader('content-length', String(body.length));
+    res.end(body);
   }
 
   function remember(
@@ -374,17 +453,26 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
     }
     if (shouldCache && !shouldCache(req, res)) return;
 
+    const type = res.getHeader('content-type');
+    const compressible =
+      compress &&
+      body.length >= COMPRESS_THRESHOLD &&
+      typeof type === 'string' &&
+      /^text\/|json|javascript|xml/i.test(type) &&
+      !(typeof control === 'string' && /no-transform/i.test(control));
+
     const headers: [string, number | string | string[]][] = [];
     for (const name of REPLAYED_CANDIDATES) {
       if (NOT_REPLAYED.has(name)) continue;
-      const value = res.getHeader(name);
-      if (value !== undefined) headers.push([name, value as number | string | string[]]);
+      let value = res.getHeader(name) as number | string | string[] | undefined;
+      // on every hit, encoded or not yet, so a cache further on keeps the copies apart
+      if (name === 'vary' && compressible) value = withAcceptEncoding(value);
+      if (value !== undefined) headers.push([name, value]);
     }
 
     // learned here rather than at startup, because this is the one place that holds a rendered
     // page and knows it is HTML worth reading
     if (earlyHints && hintLinks === null) {
-      const type = res.getHeader('content-type');
       if (typeof type === 'string' && type.includes('html')) {
         hintLinks = earlyHintLinksFrom(body.toString('utf8'));
       }
@@ -400,6 +488,7 @@ export function ssrCaching(options: SsrCachingOptions = {}): SsrCachingMiddlewar
       freshUntil: now + ttl,
       staleUntil: now + ttl + swr,
     };
+    if (compressible) precompress(entry);
     store.delete(key);
     store.set(key, entry);
     stats.stored++;

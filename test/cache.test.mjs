@@ -475,6 +475,88 @@ both(
   },
 );
 
+const bigPage = `<html><body>${'compress me '.repeat(500)}</body></html>`;
+const servesBig = (req, res) => {
+  res.setHeader('content-type', 'text/html;charset=UTF-8');
+  res.end(bigPage);
+};
+/** Asks with each Accept-Encoding, after the copies had time to be made. */
+async function encodings(get) {
+  await (await get('/big')).text();
+  await new Promise((r) => setTimeout(r, 100));
+  const seen = {};
+  for (const accept of ['gzip, deflate, br', 'gzip', 'br;q=0, gzip', 'identity']) {
+    const res = await get('/big', { headers: { 'accept-encoding': accept } });
+    const body = await res.text();
+    seen[accept] = [res.headers.get('content-encoding'), body === bigPage];
+  }
+  const last = await get('/big');
+  await last.text();
+  seen.vary = last.headers.get('vary');
+  return seen;
+}
+
+both(
+  'compress: a hit goes out in the encoding the client asked for, compressed once',
+  { ttl: 60_000, compress: true },
+  {
+    setup(app) {
+      app.get('/big', servesBig);
+    },
+    run: ({ get }) => encodings(get),
+    expect: {
+      'gzip, deflate, br': ['br', true],
+      gzip: ['gzip', true],
+      'br;q=0, gzip': ['gzip', true],
+      identity: [null, true],
+      vary: 'Accept-Encoding',
+    },
+  },
+);
+
+both(
+  'compress with compression() in front: the copy passes through, not compressed twice',
+  { ttl: 60_000, compress: true },
+  {
+    setup(app) {
+      app.get('/big', servesBig);
+    },
+    wireBefore: (app) => app.use(compression({ threshold: 0 })),
+    run: ({ get }) => encodings(get),
+    expect: {
+      'gzip, deflate, br': ['br', true],
+      gzip: ['gzip', true],
+      'br;q=0, gzip': ['gzip', true],
+      identity: [null, true],
+      vary: 'Accept-Encoding',
+    },
+  },
+);
+
+test('compress with fulmine.compression() in front: the copy passes through too', async () => {
+  const app = fulmine();
+  app.set('etag', false);
+  app.use(fulmine.compression({ threshold: 0 }));
+  app.use(ssrCaching({ ttl: 60_000, compress: true }));
+  app.get('/big', servesBig);
+  const server = await new Promise((r) => {
+    const s = app.listen(0, () => r(s));
+  });
+  try {
+    const port = (server.address ? server : app).address().port;
+    const seen = await encodings((path, init) => fetch(`http://localhost:${port}${path}`, init));
+    assert.deepStrictEqual(seen, {
+      'gzip, deflate, br': ['br', true],
+      gzip: ['gzip', true],
+      'br;q=0, gzip': ['gzip', true],
+      identity: [null, true],
+      vary: 'Accept-Encoding',
+    });
+  } finally {
+    app.close ? app.close() : server.close();
+  }
+});
+
 both(
   'compression registered after: nothing is cached, and the page is still correct',
   { ttl: 60_000 },
@@ -590,7 +672,7 @@ test('nothing is sent over HTTP/1.1 unless it is asked for, and never on a serve
   assert.strictEqual(cache.stats().hinted, 0);
   server.close();
 
-  // and on fulmine, which has no writeEarlyHints at all, asking for it changes nothing
+  // fulmine takes the call and sends nothing, uWS has no 103: the page must still come out right
   const app2 = fulmine();
   app2.set('etag', false);
   const cache2 = ssrCaching({ ttl: 60_000, earlyHints: 'always' });
@@ -599,13 +681,16 @@ test('nothing is sent over HTTP/1.1 unless it is asked for, and never on a serve
     res.setHeader('content-type', 'text/html;charset=UTF-8');
     res.end('<html><head><link rel="stylesheet" href="s.css"></head><body>page</body></html>');
   });
-  const server2 = app2.listen(0, async () => {
+  const server2 = await new Promise((r) => {
+    const s = app2.listen(0, () => r(s));
+  });
+  try {
     const port2 = (server2.address ? server2 : app2).address().port;
     await fetch(`http://localhost:${port2}/one`).then((r) => r.text());
     const second = await fetch(`http://localhost:${port2}/two`);
     assert.strictEqual(second.status, 200);
-    assert.strictEqual(cache2.stats().hinted, 0);
+    assert.match(await second.text(), /page/);
+  } finally {
     app2.close ? app2.close() : server2.close();
-  });
-  await new Promise((r) => setTimeout(r, 400));
+  }
 });

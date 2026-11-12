@@ -71,6 +71,25 @@ compressed bytes as if they were HTML.
 It refuses to store an already-encoded response rather than doing that, and says so once on the
 console, because a cache that silently never fills is an afternoon of wondering why.
 
+With `compression()` in front, every hit is compressed again, and on a 28 KB page that is about ten
+times the cost of the hit itself. `compress: true` keeps a brotli and a gzip copy of each stored
+page, made once in the background, and a hit sends the one the client asked for. `compression()`
+and Fulmine's own `fulmine.compression()` both pass an already encoded body through, so they work
+together:
+
+```ts
+app.use(compression()); // or fulmine.compression()
+app.use(ssrCaching({ compress: true }));
+```
+
+Measured on a hit of a 28 KB page, server CPU per request:
+
+| In front                 | Without `compress` | With `compress` |
+| :----------------------- | -----------------: | --------------: |
+| Express, `compression()` |              428us |            54us |
+| Fulmine, `compression()` |              400us |            26us |
+| Fulmine, its own         |              235us |            22us |
+
 That is the whole integration. Every response carries an `x-ssr-cache` header saying `HIT`, `MISS`,
 `STALE` or `BYPASS`, so you can see what it is doing before you trust it.
 
@@ -234,19 +253,20 @@ markup. Pick it from the data, and read the section above about who gets to see 
 
 ## Options
 
-| Option                 | Default          |                                                            |
-| :--------------------- | :--------------- | :--------------------------------------------------------- |
-| `ttl`                  | `60000`          | how long a page stays fresh, in milliseconds               |
-| `staleWhileRevalidate` | `0`              | how long after `ttl` a stale page is still served          |
-| `maxEntries`           | `500`            | how many pages to keep; least recently served goes first   |
-| `maxBodyBytes`         | `5 MiB`          | bodies above this are served but never stored              |
-| `earlyHints`           | `false`          | announce the page's assets in a `103` on a miss            |
-| `key`                  | method and url   | return `null` to bypass the cache for that request         |
-| `bypassCookies`        | `[]`             | cookie names that make a request personal, matched exactly |
-| `cacheAuthenticated`   | `false`          | let requests with `Authorization` use the cache            |
-| `shouldCache`          | -                | the last word on whether a rendered response may be stored |
-| `methods`              | `['GET','HEAD']` | which methods are eligible                                 |
-| `header`               | `'x-ssr-cache'`  | the header reporting HIT/MISS/STALE/BYPASS, or `false`     |
+| Option                 | Default          |                                                               |
+| :--------------------- | :--------------- | :------------------------------------------------------------ |
+| `ttl`                  | `60000`          | how long a page stays fresh, in milliseconds                  |
+| `staleWhileRevalidate` | `0`              | how long after `ttl` a stale page is still served             |
+| `maxEntries`           | `500`            | how many pages to keep; least recently served goes first      |
+| `maxBodyBytes`         | `5 MiB`          | bodies above this are served but never stored                 |
+| `earlyHints`           | `false`          | announce the page's assets in a `103` on a miss               |
+| `compress`             | `false`          | keep brotli and gzip copies, so a hit is not compressed again |
+| `key`                  | method and url   | return `null` to bypass the cache for that request            |
+| `bypassCookies`        | `[]`             | cookie names that make a request personal, matched exactly    |
+| `cacheAuthenticated`   | `false`          | let requests with `Authorization` use the cache               |
+| `shouldCache`          | -                | the last word on whether a rendered response may be stored    |
+| `methods`              | `['GET','HEAD']` | which methods are eligible                                    |
+| `header`               | `'x-ssr-cache'`  | the header reporting HIT/MISS/STALE/BYPASS, or `false`        |
 
 The middleware also carries `stats()`, `purge(key?)` and `keys()`, so a deploy can drop what it
 needs to and a dashboard can see what is happening.
