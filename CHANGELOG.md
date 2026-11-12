@@ -1,5 +1,28 @@
 # Changelog
 
+## [22.3.0](https://github.com/nigrosimone/ng-ssr-caching/compare/v22.2.0...v22.3.0) (2026-11-12)
+
+### 🚀 Features
+
+- compress keeps a brotli and a gzip copy of a stored page, so a hit is not compressed again ([bc38b2a](https://github.com/nigrosimone/ng-ssr-caching/commit/bc38b2abe9cc088d3e1d15e7fe34e2c5976e416c))
+- **test:** add more test ([f660dcb](https://github.com/nigrosimone/ng-ssr-caching/commit/f660dcb56213895bfdd00ba88f49e957c504adac))
+- **test:** add more test ([4df5518](https://github.com/nigrosimone/ng-ssr-caching/commit/4df55182b87fa1bbbd49d8c13431766f7047b9a4))
+
+### 📝 Documentation
+
+- update section header for clarity in README ([ef8a9e7](https://github.com/nigrosimone/ng-ssr-caching/commit/ef8a9e70bf4195aecfb8a2998c4394a4da67be6b))
+- the examples ship what they built, and serve it without a dev server ([333d0cf](https://github.com/nigrosimone/ng-ssr-caching/commit/333d0cfb738cfef58bf8abafc7d991a49507c69a))
+- an angular example too, and both open on stackblitz ([8ec39fe](https://github.com/nigrosimone/ng-ssr-caching/commit/8ec39fe47466a84919c0bf2fad4c10f8bec7a50c))
+- a runnable react example, ready to open on stackblitz ([77c56ca](https://github.com/nigrosimone/ng-ssr-caching/commit/77c56ca22d73302fef764d4fcce5025afec9725c))
+
+### 🧹 Chores
+
+- coverage ([14c9dc5](https://github.com/nigrosimone/ng-ssr-caching/commit/14c9dc5f4649e4ce7338de5085028babdd33a8b9))
+- the angular dev server cache does not belong in the repo ([9b58ca7](https://github.com/nigrosimone/ng-ssr-caching/commit/9b58ca79f3dbe1ee654ced458d82b9252322b981))
+- the example lockfile is not ours to format ([9b90df9](https://github.com/nigrosimone/ng-ssr-caching/commit/9b90df9a489f4c1fb926df2891e9856c90316445))
+
+**Full Changelog**: https://github.com/nigrosimone/ng-ssr-caching/compare/v22.2.0...v22.3.0
+
 ## [22.2.0](https://github.com/nigrosimone/ng-ssr-caching/compare/v22.1.0...v22.2.0) (2026-08-08)
 
 ### 🚀 Features
